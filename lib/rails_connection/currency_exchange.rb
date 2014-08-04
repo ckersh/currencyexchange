@@ -27,20 +27,25 @@ class CurrencyExchange
      NOT_POSSIBLE ="CURRENCY CONVERSION NOT POSSIBLE"
 
      def self.currency_exchange(amount, currency, with_base_currency="EUR")
-          if ( (@currency=currency_rate_exists?(currency)).nil? || (@base_currency=currency_rate_exists?(with_base_currency)).nil? )  then
-             raise(NOT_POSSIBLE+" #{currency[0..2]} AND #{with_base_currency[0..2]}")
-          else
-             newest_currency_rates?(@currency,@base_currency,Time.now.utc)
-             convert(@currency,@base_currency,amount)
-          end
+       @currency = currency_rate_exists?(currency)
+       @base_currency = currency_rate_exists?(with_base_currency)
+
+       if ( @currency.nil? || @base_currency.nil? )
+         raise(NOT_POSSIBLE+" #{currency[0..2]} AND #{with_base_currency[0..2]}")
+       else
+         newest_currency_rates?(@currency,@base_currency,Time.now.utc)
+         convert(@currency,@base_currency,amount)
+       end
      end
 
      def self.currency_rate_exists?(currency)
-       if (rate=ExchangeRate.find_by_currency(currency[0..2])).nil? then
-         if ExchangeRate.find(:all).size == 0 then
-           if ExchangeRateParser.request_rates(ExchangeRateParser.request_url_name).nil? then ExchangeRateParser.request_rates(ExchangeRateParser.request_file_name) end
+       if (rate = ExchangeRate.find_by_currency(currency[0..2])).nil?
+         if ExchangeRate.find(:all).size == 0
+           if ExchangeRateParser.request_rates(ExchangeRateParser.request_url_name).nil?
+             ExchangeRateParser.request_rates(ExchangeRateParser.request_file_name)
+           end
          end
-         rate=ExchangeRate.find_by_currency(currency[0..2])
+         rate = ExchangeRate.find_by_currency(currency[0..2])
        end
        rate
      end
@@ -48,13 +53,38 @@ class CurrencyExchange
      #private
 
      def self.newest_currency_rates?(currency,base_currency, time_now)
-       if (time_now.wday != 6 && time_now.wday != 0) && (time_now.wday > currency.issued_on.wday || time_now.wday > base_currency.issued_on.wday) then ExchangeRateParser.request_rates(ExchangeRateParser.request_url_name) end
+       # conditions to satisfy
+       # 1. if not saturday or sunday
+       # 2. if day of week is greater than day of week when the currency was issued on
+       #    OR
+       #    day of week is greater than day of week the base currency was issued on
+       # Problem:
+       # This condition does not take into account:
+       #   1. currencies issued on Friday will never update themselves again
+       #   2. currencies issued in the past are not taken into account
+       #      (e.g. 2014-08-01 09:39:15 - Friday > 2009-02-04 23:02:15 - Thursday)
+       #       Should not be comparing using wday, it is not accurate
+       if (time_now.wday != 6 && time_now.wday != 0) && has_past_date?(time_now, currency.issued_on, base_currency.issued_on)
+          ExchangeRateParser.request_rates(ExchangeRateParser.request_url_name)
+       end
      end
 
-     def self.convert(from_currency,to_currency,amount)
-         ((amount / from_currency.rate) * to_currency.rate).to_i
-     end
+    # Checks to see if any of the dates are in the past     
+    # If a past date exists return true 
+    def self.has_past_date?(time_now, *dates)
+      past_dates = dates.select { |c| comparable_date(time_now) > comparable_date(c) }
+      (past_dates.size > 0) ? true : false
+    end
 
+    # Compare dates using rails db date string
+    def self.comparable_date(time)
+      time.at_beginning_of_day.to_s(:db)
+    end
+
+    def self.convert(from_currency,to_currency,amount)
+        ((amount / from_currency.rate) * to_currency.rate).to_i
+    end
+    
  end
      
  ####################################
